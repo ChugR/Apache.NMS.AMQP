@@ -17,7 +17,7 @@
 using System;
 
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
 	public class TextMessage : BaseMessage, ITextMessage
 	{

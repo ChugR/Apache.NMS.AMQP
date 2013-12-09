@@ -22,7 +22,7 @@ using System.Runtime.Serialization;
 using System.Runtime.Serialization.Formatters.Binary;
 #endif
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
 	public class ObjectMessage : BaseMessage, IObjectMessage
 	{

@@ -19,7 +19,7 @@ using System.Threading;
  */
 using Apache.NMS.Util;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
     /// <summary>
     /// An object capable of receiving messages from some destination

@@ -19,7 +19,7 @@
 using Apache.NMS.Util;
 using System.IO;
 using System;
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
 	/// <summary>
 	///

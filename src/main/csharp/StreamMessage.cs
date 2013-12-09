@@ -19,7 +19,7 @@ using System;
 using System.IO;
 using Apache.NMS.Util;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
 	public class StreamMessage : BaseMessage, IStreamMessage
 	{

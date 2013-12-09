@@ -18,10 +18,10 @@
 using System;
 using Org.Apache.Qpid.Messaging;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
     /// <summary>
-    /// Represents a NMS Qpid connection.
+    /// Represents a NMS Qpid/Amqp connection.
     /// </summary>
     ///
     public class Connection : IConnection

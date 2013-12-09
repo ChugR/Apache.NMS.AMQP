@@ -17,7 +17,7 @@
 using System;
 using Org.Apache.Qpid.Messaging;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
     /// <summary>
     /// An object capable of sending messages to some destination
@@ -90,8 +90,8 @@ namespace Apache.NMS.Qpid
                     // TODO: message.NMSMessageId =
                 }
 
-                // Convert the Message into a Qpid message
-                Message msg = session.MessageConverter.ToQpidMessage(message);
+                // Convert the Message into a Amqp message
+                Message msg = session.MessageConverter.ToAmqpMessage(message);
 
                 // TODO: send the message!
             }

@@ -18,15 +18,15 @@ using System;
 using Apache.NMS.Policies;
 using Org.Apache.Qpid.Messaging;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
     /// <summary>
-    /// A Factory that can estbalish NMS connections to Qpid
+    /// A Factory that can estbalish NMS connections to Qpid/Amqp
     /// </summary>
     public class ConnectionFactory : IConnectionFactory
     {
         public const string DEFAULT_BROKER_URL = "tcp://localhost:5672";
-        public const string ENV_BROKER_URL = "QPID_BROKER_URL";
+        public const string ENV_BROKER_URL = "AMQP_BROKER_URL";
         private Uri brokerUri;
         private string clientID;
         private IRedeliveryPolicy redeliveryPolicy = new RedeliveryPolicy();
@@ -68,7 +68,7 @@ namespace Apache.NMS.Qpid
         }
 
         /// <summary>
-        /// Creates a new connection to Qpid.
+        /// Creates a new connection to Qpid/Amqp.
         /// </summary>
         public IConnection CreateConnection()
         {
@@ -76,7 +76,7 @@ namespace Apache.NMS.Qpid
         }
 
         /// <summary>
-        /// Creates a new connection to Qpid.
+        /// Creates a new connection to Qpid/Amqp.
         /// </summary>
         public IConnection CreateConnection(string userName, string password)
         {
@@ -84,7 +84,7 @@ namespace Apache.NMS.Qpid
         }
 
         /// <summary>
-        /// Creates a new connection to Qpid.
+        /// Creates a new connection to Qpid/Amqp.
         /// </summary>
         public IConnection CreateConnection(string userName, string password, bool useLogging)
         {

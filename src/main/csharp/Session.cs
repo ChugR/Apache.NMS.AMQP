@@ -17,10 +17,10 @@
 using System;
 using Org.Apache.Qpid.Messaging;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
     /// <summary>
-    /// Qpid provider of ISession
+    /// Amqp provider of ISession
     /// </summary>
     public class Session : ISession
     {
@@ -67,7 +67,7 @@ namespace Apache.NMS.Qpid
         {
             if(selector != null)
             {
-                throw new NotSupportedException("Selectors are not supported by Qpid");
+                throw new NotSupportedException("Selectors are not supported by Qpid/Amqp");
             }
             return new MessageConsumer(this, acknowledgementMode);
         }
@@ -171,17 +171,17 @@ namespace Apache.NMS.Qpid
 
         public void Commit()
         {
-            throw new NotSupportedException("Transactions not supported by Qpid");
+            throw new NotSupportedException("Transactions not supported by Qpid/Amqp");
         }
 
         public void Rollback()
         {
-            throw new NotSupportedException("Transactions not supported by Qpid");
+            throw new NotSupportedException("Transactions not supported by Qpid/Amqp");
         }
 
         public void Recover()
         {
-            throw new NotSupportedException("Transactions not supported by Qpid");
+            throw new NotSupportedException("Transactions not supported by Qpid/Amqp");
         }
 
         // Properties

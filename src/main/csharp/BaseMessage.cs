@@ -18,7 +18,7 @@
 using System;
 using Apache.NMS.Util;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
 	public delegate void AcknowledgeHandler(BaseMessage baseMessage);
 

@@ -18,10 +18,10 @@
 using System;
 using System.Reflection;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
 	/// <summary>
-	/// Implements the Connection Meta-Data feature for Apache.NMS.Qpid
+	/// Implements the Connection Meta-Data feature for Apache.NMS.Qpid/Amqp
 	/// </summary>
 	public class ConnectionMetaData : IConnectionMetaData
 	{

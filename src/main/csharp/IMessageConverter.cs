@@ -16,12 +16,12 @@
  */
 using Org.Apache.Qpid.Messaging;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
 	public interface IMessageConverter
 	{
 
-		Message ToQpidMessage(IMessage message);
+		Message ToAmqpMessage(IMessage message);
 		IMessage ToNmsMessage(Message message);
 	}
 }

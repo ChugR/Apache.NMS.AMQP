@@ -20,7 +20,7 @@ using System.Text;
 using Apache.NMS.Util;
 using Org.Apache.Qpid.Messaging;
 
-namespace Apache.NMS.Qpid
+namespace Apache.NMS.Amqp
 {
 	public enum NMSMessageType
 	{
@@ -34,10 +34,10 @@ namespace Apache.NMS.Qpid
 
 	public class DefaultMessageConverter : IMessageConverter
 	{
-		public virtual Message ToQpidMessage(IMessage message)
+		public virtual Message ToAmqpMessage(IMessage message)
 		{
-			Message qpidMessage = new Message();
-			return qpidMessage;
+			Message amqpMessage = new Message();
+			return amqpMessage;
 		}
 
 		public virtual IMessage ToNmsMessage(Message message)
