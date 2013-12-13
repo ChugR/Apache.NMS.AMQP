@@ -16,6 +16,9 @@
  */
 
 using System;
+using System.Collections;
+using System.Threading;
+using Apache.NMS.Util;
 using Org.Apache.Qpid.Messaging;
 
 namespace Apache.NMS.Amqp
@@ -26,17 +29,44 @@ namespace Apache.NMS.Amqp
     ///
     public class Connection : IConnection
     {
+        private static readonly TimeSpan InfiniteTimeSpan = TimeSpan.FromMilliseconds(Timeout.Infinite);
+
         private AcknowledgementMode acknowledgementMode = AcknowledgementMode.AutoAcknowledge;
         private IMessageConverter messageConverter = new DefaultMessageConverter();
 
         private IRedeliveryPolicy redeliveryPolicy;
         private ConnectionMetaData metaData = null;
-        private bool connected;
-        private bool closed;
+
+        private readonly object connectedLock = new object();
+        private readonly Atomic<bool> connected = new Atomic<bool>(false);
+        private readonly Atomic<bool> closed = new Atomic<bool>(false);
+        private readonly Atomic<bool> closing = new Atomic<bool>(false);
+
+        private readonly Atomic<bool> started = new Atomic<bool>(false);
+        private bool disposed = false;
         private string clientId;
         private Uri brokerUri;
 
-        Org.Apache.Qpid.Messaging.Connection connection = null;
+        private readonly IList sessions = ArrayList.Synchronized(new ArrayList());
+
+        Org.Apache.Qpid.Messaging.Connection qpidConnection = null; // Don't create until Start()
+
+        /// <summary>
+        /// Creates new connection
+        /// </summary>
+        /// <param name="connectionUri"></param>
+        public Connection(Uri connectionUri)
+        {
+            this.brokerUri = connectionUri;
+        }
+
+        /// <summary>
+        /// Destroys connection
+        /// </summary>
+        ~Connection()
+        {
+            Dispose(false);
+        }
 
         /// <summary>
         /// Starts message delivery for this connection.
@@ -44,8 +74,16 @@ namespace Apache.NMS.Amqp
         public void Start()
         {
             CheckConnected();
-            connection = new Org.Apache.Qpid.Messaging.Connection(brokerUri.LocalPath);
-            connection.Open();
+            if (started.CompareAndSet(false, true))
+            {
+                lock (sessions.SyncRoot)
+                {
+                    foreach (Session session in sessions)
+                    {
+                        //session.Start();
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -54,15 +92,25 @@ namespace Apache.NMS.Amqp
         /// </summary>
         public bool IsStarted
         {
-            get { return true; }
+            get { return started.Value; }
         }
 
         /// <summary>
-        /// Stop message delivery for this connection.
+        /// Temporarily stop asynchronous delivery of inbound messages for this connection.
+        /// The sending of outbound messages is unaffected.
         /// </summary>
         public void Stop()
         {
-            CheckConnected();
+            if (started.CompareAndSet(true, false))
+            {
+                lock (sessions.SyncRoot)
+                {
+                    foreach (Session session in sessions)
+                    {
+                        //session.Stop();
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -84,7 +132,32 @@ namespace Apache.NMS.Amqp
 
         public void Dispose()
         {
-            closed = true;
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected void Dispose(bool disposing)
+        {
+            if (disposed)
+            {
+                return;
+            }
+
+            if (disposing)
+            {
+                // Dispose managed code here.
+            }
+
+            try
+            {
+                Close();
+            }
+            catch
+            {
+                // Ignore network errors.
+            }
+
+            disposed = true;
         }
 
         /// <summary>
@@ -122,7 +195,7 @@ namespace Apache.NMS.Amqp
             get { return clientId; }
             set
             {
-                if(connected)
+                if(connected.Value)
                 {
                     throw new NMSException("You cannot change the ClientId once the Connection is connected");
                 }
@@ -178,11 +251,69 @@ namespace Apache.NMS.Amqp
         /// </summary>
         public event ConnectionResumedListener ConnectionResumedListener;
 
-        protected void CheckConnected()
+        /// <summary>
+        /// Check and ensure that the connection object is connected.  
+        /// New connections are established for the first time.
+        /// Subsequent calls verify that connection is connected and is not closed or closing.
+        /// This function returns only if connection is successfully opened else
+        /// a ConnectionClosedException is thrown.
+        /// </summary>
+        internal void CheckConnected()
         {
-            if(closed)
+            if (closed.Value || closing.Value)
             {
-                throw new NMSException("Connection Closed");
+                throw new ConnectionClosedException();
+            }
+            if (connected.Value)
+            {
+                return;
+            }
+            DateTime timeoutTime = DateTime.Now + this.RequestTimeout;
+            int waitCount = 1;
+
+            while (!connected.Value && !closed.Value && !closing.Value)
+            {
+                if (Monitor.TryEnter(connectedLock))
+                {
+                    try // strictly for Monitor unlock
+                    {
+                        // Create and open the Qpid connection
+                        try
+                        {
+                            // TODO: embellish the brokerUri with other connection options
+                            // Allocate a new Qpid connection
+                            qpidConnection = new Org.Apache.Qpid.Messaging.Connection(brokerUri.ToString());
+                            
+                            // Open the connection
+                            qpidConnection.Open();
+
+                            connected.Value = true;
+                        }
+                        catch (Org.Apache.Qpid.Messaging.QpidException e)
+                        {
+                            throw new ConnectionClosedException( e.Message );
+                        }
+                    }
+                    finally
+                    {
+                        Monitor.Exit(connectedLock);
+                    }
+                }
+
+                if (connected.Value || closed.Value || closing.Value
+                    || (DateTime.Now > timeoutTime && this.RequestTimeout != InfiniteTimeSpan))
+                {
+                    break;
+                }
+
+                // Back off from being overly aggressive.  Having too many threads
+                // aggressively trying to connect to a down broker pegs the CPU.
+                Thread.Sleep(5 * (waitCount++));
+            }
+
+            if (!connected.Value)
+            {
+                throw new ConnectionClosedException();
             }
         }
 
@@ -197,45 +328,13 @@ namespace Apache.NMS.Amqp
 
         public void HandleException(Exception e)
         {
-            if(ExceptionListener != null && !this.closed)
+            if(ExceptionListener != null && !this.closed.Value)
             {
                 ExceptionListener(e);
             }
             else
             {
                 Tracer.Error(e);
-            }
-        }
-
-        public void HandleTransportInterrupted()
-        {
-            Tracer.Debug("Transport has been Interrupted.");
-
-            if(this.ConnectionInterruptedListener != null && !this.closed)
-            {
-                try
-                {
-                    this.ConnectionInterruptedListener();
-                }
-                catch
-                {
-                }
-            }
-        }
-
-        public void HandleTransportResumed()
-        {
-            Tracer.Debug("Transport has resumed normal operation.");
-
-            if(this.ConnectionResumedListener != null && !this.closed)
-            {
-                try
-                {
-                    this.ConnectionResumedListener();
-                }
-                catch
-                {
-                }
             }
         }
     }

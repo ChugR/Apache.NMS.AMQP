@@ -88,7 +88,7 @@ namespace Apache.NMS.Amqp
         /// </summary>
         public IConnection CreateConnection(string userName, string password, bool useLogging)
         {
-            Connection connection = new Connection();
+            Connection connection = new Connection(this.BrokerUri);
 
             connection.RedeliveryPolicy = this.redeliveryPolicy.Clone() as IRedeliveryPolicy;
             //connection.ConsumerTransformer = this.consumerTransformer;
