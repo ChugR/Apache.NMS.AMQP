@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 using System;
+using System.Collections;
+using System.Threading;
 using Org.Apache.Qpid.Messaging;
 
 namespace Apache.NMS.Amqp
@@ -24,23 +26,142 @@ namespace Apache.NMS.Amqp
     /// </summary>
     public class Session : ISession
     {
+        /// <summary>
+        /// Private object used for synchronization, instead of public "this"
+        /// </summary>
+        private readonly object myLock = new object();
+
+        private readonly IDictionary consumers = Hashtable.Synchronized(new Hashtable());
+        private readonly IDictionary producers = Hashtable.Synchronized(new Hashtable());
+
         private Connection connection;
         private AcknowledgementMode acknowledgementMode;
         private IMessageConverter messageConverter;
+        private readonly int id;
 
-        public Session(Connection connection, AcknowledgementMode acknowledgementMode)
+        private int consumerCounter;
+        private int producerCounter;
+        private long nextDeliveryId;
+        private long lastDeliveredSequenceId;
+        protected bool disposed = false;
+        protected bool closed = false;
+        protected bool closing = false;
+        private TimeSpan disposeStopTimeout = TimeSpan.FromMilliseconds(30000);
+        private TimeSpan closeStopTimeout = TimeSpan.FromMilliseconds(Timeout.Infinite);
+        private TimeSpan requestTimeout;
+
+        public Session(Connection connection, int sessionId, AcknowledgementMode acknowledgementMode)
         {
             this.connection = connection;
             this.acknowledgementMode = acknowledgementMode;
             MessageConverter = connection.MessageConverter;
-            if(this.acknowledgementMode == AcknowledgementMode.Transactional)
+            id = sessionId;
+            if (this.acknowledgementMode == AcknowledgementMode.Transactional)
             {
                 // TODO: transactions
+                throw new NotSupportedException("Transactions are not supported by Qpid/Amqp");
             }
         }
 
         public void Dispose()
         {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected void Dispose(bool disposing)
+        {
+            if (this.disposed)
+            {
+                return;
+            }
+
+            try
+            {
+                // Force a Stop when we are Disposing vs a Normal Close.
+                Close();
+            }
+            catch
+            {
+                // Ignore network errors.
+            }
+
+            this.disposed = true;
+        }
+
+        public virtual void Close()
+        {
+            if (!this.closed)
+            {
+                try
+                {
+                    Tracer.InfoFormat("Closing The Session with Id {0}", SessionId);
+                    DoClose();
+                    Tracer.InfoFormat("Closed The Session with Id {0}", SessionId);
+                }
+                catch (Exception ex)
+                {
+                    Tracer.ErrorFormat("Error closing Session with id {0} : {1}", SessionId, ex);
+                }
+            }
+        }
+
+        internal void DoClose()
+        {
+            Shutdown();
+        }
+
+        internal void Shutdown()
+        {
+            //Tracer.InfoFormat("Executing Shutdown on Session with Id {0}", this.info.SessionId);
+
+            if (this.closed)
+            {
+                return;
+            }
+
+            lock (myLock)
+            {
+                if (this.closed || this.closing)
+                {
+                    return;
+                }
+
+                try
+                {
+                    this.closing = true;
+
+                    // Stop all message deliveries from this Session
+                    lock (consumers.SyncRoot)
+                    {
+                        foreach (MessageConsumer consumer in consumers.Values)
+                        {
+                            consumer.Shutdown();
+                        }
+                    }
+                    consumers.Clear();
+
+                    lock (producers.SyncRoot)
+                    {
+                        foreach (MessageProducer producer in producers.Values)
+                        {
+                            producer.Shutdown();
+                        }
+                    }
+                    producers.Clear();
+
+                    Connection.RemoveSession(this);
+                }
+                catch (Exception ex)
+                {
+                    Tracer.ErrorFormat("Error closing Session with Id {0} : {1}", SessionId, ex);
+                }
+                finally
+                {
+                    this.closed = true;
+                    this.closing = false;
+                }
+            }
         }
 
         public IMessageProducer CreateProducer()
@@ -50,12 +171,40 @@ namespace Apache.NMS.Amqp
 
         public IMessageProducer CreateProducer(IDestination destination)
         {
-            return new MessageProducer(this, (Destination) destination);
+            MessageProducer producer = null;
+            try
+            {
+                Destination dest = null;
+                if (destination != null)
+                {
+                    dest.Path = destination.ToString();
+                }
+                producer = DoCreateMessageProducer(dest);
+
+                this.AddProducer(producer);
+            }
+            catch (Exception)
+            {
+                if (producer != null)
+                {
+                    this.RemoveProducer(producer.ProducerId);
+                    producer.Close();
+                }
+
+                throw;
+            }
+
+            return producer;
+        }
+
+        internal virtual MessageProducer DoCreateMessageProducer(Destination destination)
+        {
+            return new MessageProducer(this, GetNextProducerId(), destination);
         }
 
         public IMessageConsumer CreateConsumer(IDestination destination)
         {
-            return CreateConsumer(destination, null);
+            return CreateConsumer(destination, null, false);
         }
 
         public IMessageConsumer CreateConsumer(IDestination destination, string selector)
@@ -65,16 +214,54 @@ namespace Apache.NMS.Amqp
 
         public IMessageConsumer CreateConsumer(IDestination destination, string selector, bool noLocal)
         {
-            if(selector != null)
+            if (destination == null)
             {
-                throw new NotSupportedException("Selectors are not supported by Qpid/Amqp");
+                throw new InvalidDestinationException("Cannot create a Consumer with a Null destination");
             }
-            return new MessageConsumer(this, acknowledgementMode);
+
+            MessageConsumer consumer = null;
+
+            try
+            {
+                Destination dest = null;
+                if (destination != null)
+                {
+                    dest.Path = destination.ToString();
+                }
+                consumer = DoCreateMessageConsumer(GetNextConsumerId(), dest, acknowledgementMode);
+
+                consumer.ConsumerTransformer = this.ConsumerTransformer;
+
+                this.AddConsumer(consumer);
+
+                if (this.Connection.IsStarted)
+                {
+                    consumer.Start();
+                }
+            }
+            catch (Exception)
+            {
+                if (consumer != null)
+                {
+                    this.RemoveConsumer(consumer);
+                    consumer.Close();
+                }
+
+                throw;
+            }
+
+            return consumer;
         }
+
 
         public IMessageConsumer CreateDurableConsumer(ITopic destination, string name, string selector, bool noLocal)
         {
             throw new NotSupportedException("TODO: Durable Consumer");
+        }
+
+        internal virtual MessageConsumer DoCreateMessageConsumer(int id, Destination destination, AcknowledgementMode mode)
+        {
+            return new MessageConsumer(this, id, destination, mode);
         }
 
         public void DeleteDurableConsumer(string name)
@@ -229,11 +416,54 @@ namespace Apache.NMS.Amqp
             set { this.producerTransformer = value; }
         }
 
-        public void Close()
+        public void AddConsumer(MessageConsumer consumer)
         {
-            Dispose();
+            if (!this.closing)
+            {
+                // Registered with Connection before we register at the broker.
+                consumers[consumer.ConsumerId] = consumer;
+            }
         }
 
+        public void RemoveConsumer(MessageConsumer consumer)
+        {
+            if (!this.closing)
+            {
+                consumers.Remove(consumer.ConsumerId);
+            }
+        }
+
+        public void AddProducer(MessageProducer producer)
+        {
+            if (!this.closing)
+            {
+                this.producers[producer.ProducerId] = producer;
+            }
+        }
+
+        public void RemoveProducer(int objectId)
+        {
+            if (!this.closing)
+            {
+                producers.Remove(objectId);
+            }
+        }
+
+        public int GetNextConsumerId()
+        {
+            return Interlocked.Increment(ref consumerCounter);
+        }
+
+        public int GetNextProducerId()
+        {
+            return Interlocked.Increment(ref producerCounter);
+        }
+
+        public int SessionId
+        {
+            get { return id; }
+        }
+        
         #region Transaction State Events
 
         public event SessionTxEventDelegate TransactionStartedListener;

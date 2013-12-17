@@ -34,6 +34,8 @@ namespace Apache.NMS.Amqp
         private MsgPriority priority;
         private bool disableMessageID;
         private bool disableMessageTimestamp;
+        private readonly int id;
+
         //private IMessageConverter messageConverter;
 
         private ProducerTransformerDelegate producerTransformer;
@@ -43,9 +45,10 @@ namespace Apache.NMS.Amqp
             set { this.producerTransformer = value; }
         }
 
-        public MessageProducer(Session session, Destination destination)
+        public MessageProducer(Session session, int producerId, Destination destination)
         {
             this.session = session;
+            this.id = producerId;
             this.destination = destination;
         }
 
@@ -193,6 +196,11 @@ namespace Apache.NMS.Amqp
         {
             get { return disableMessageTimestamp; }
             set { disableMessageTimestamp = value; }
+        }
+
+        public int ProducerId
+        {
+            get { return id; }
         }
     }
 }

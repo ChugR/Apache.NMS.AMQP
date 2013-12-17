@@ -47,6 +47,7 @@ namespace Apache.NMS.Amqp
         private string clientId;
         private Uri brokerUri;
 
+        private int sessionCounter = 0; 
         private readonly IList sessions = ArrayList.Synchronized(new ArrayList());
 
         Org.Apache.Qpid.Messaging.Connection qpidConnection = null; // Don't create until Start()
@@ -127,7 +128,23 @@ namespace Apache.NMS.Amqp
         public ISession CreateSession(AcknowledgementMode mode)
         {
             CheckConnected();
-            return new Session(this, mode);
+            return new Session(this, GetNextSessionId(), mode);
+        }
+
+        internal void AddSession(Session session)
+        {
+            if (!this.closing.Value)
+            {
+                sessions.Add(session);
+            }
+        }
+
+        internal void RemoveSession(Session session)
+        {
+            if (!this.closing.Value)
+            {
+                sessions.Remove(session);
+            }
         }
 
         public void Dispose()
@@ -336,6 +353,11 @@ namespace Apache.NMS.Amqp
             {
                 Tracer.Error(e);
             }
+        }
+
+        public int GetNextSessionId()
+        {
+            return Interlocked.Increment(ref sessionCounter);
         }
     }
 }

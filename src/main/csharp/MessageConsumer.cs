@@ -29,12 +29,15 @@ namespace Apache.NMS.Amqp
         protected TimeSpan zeroTimeout = new TimeSpan(0);
 
         private readonly Session session;
+        private readonly int id;
+        private readonly Destination destination;
         private readonly AcknowledgementMode acknowledgementMode;
         private event MessageListener listener;
         private int listenerCount = 0;
         private Thread asyncDeliveryThread = null;
         private AutoResetEvent pause = new AutoResetEvent(false);
         private Atomic<bool> asyncDelivery = new Atomic<bool>(false);
+
 
         private ConsumerTransformerDelegate consumerTransformer;
         public ConsumerTransformerDelegate ConsumerTransformer
@@ -43,9 +46,11 @@ namespace Apache.NMS.Amqp
             set { this.consumerTransformer = value; }
         }
 
-        public MessageConsumer(Session session, AcknowledgementMode acknowledgementMode)
+        public MessageConsumer(Session session, int consumerId, Destination dest, AcknowledgementMode acknowledgementMode)
         {
             this.session = session;
+            this.id = consumerId;
+            this.destination = dest;
             this.acknowledgementMode = acknowledgementMode;
         }
 
@@ -198,6 +203,11 @@ namespace Apache.NMS.Amqp
             }
 
             return converted;
+        }
+
+        public int ConsumerId
+        {
+            get { return id; }
         }
     }
 }
