@@ -17,6 +17,7 @@
 
 using System;
 using System.Collections;
+using System.Collections.Specialized;
 using System.Threading;
 using Apache.NMS.Util;
 using Org.Apache.Qpid.Messaging;
@@ -29,6 +30,15 @@ namespace Apache.NMS.Amqp
     ///
     public class Connection : IConnection
     {
+        // Connections options indexes and constants
+        private const string PROTOCOL_OPTION = "protocol";
+        private const string PROTOCOL_1_0 = "amqp1.0";
+        private const string PROTOCOL_0_10 = "amqp0-10";
+        private const char SEP_ARGS = ',';
+        private const char SEP_NAME_VALUE = ':';
+        public const string USERNAME_OPTION = "username";
+        public const string PASSWORD_OPTION = "password";
+
         private static readonly TimeSpan InfiniteTimeSpan = TimeSpan.FromMilliseconds(Timeout.Infinite);
 
         private AcknowledgementMode acknowledgementMode = AcknowledgementMode.AutoAcknowledge;
@@ -44,21 +54,24 @@ namespace Apache.NMS.Amqp
 
         private readonly Atomic<bool> started = new Atomic<bool>(false);
         private bool disposed = false;
-        private string clientId;
-        private Uri brokerUri;
 
-        private int sessionCounter = 0; 
+        private Uri brokerUri;
+        private string clientId;
+        private StringDictionary connectionProperties;
+
+        private int sessionCounter = 0;
         private readonly IList sessions = ArrayList.Synchronized(new ArrayList());
 
         private Org.Apache.Qpid.Messaging.Connection qpidConnection = null; // Don't create until Start()
+
+        #region Constructor Methods
 
         /// <summary>
         /// Creates new connection
         /// </summary>
         /// <param name="connectionUri"></param>
-        public Connection(Uri connectionUri)
+        public Connection()
         {
-            this.brokerUri = connectionUri;
         }
 
         /// <summary>
@@ -69,18 +82,24 @@ namespace Apache.NMS.Amqp
             Dispose(false);
         }
 
+        #endregion
+
+        #region IStartable Members
         /// <summary>
         /// Starts message delivery for this connection.
         /// </summary>
         public void Start()
         {
+            // Create and open qpidConnection
             CheckConnected();
+
             if (started.CompareAndSet(false, true))
             {
                 lock (sessions.SyncRoot)
                 {
                     foreach (Session session in sessions)
                     {
+                        // Create and start qpidSessions
                         session.Start();
                     }
                 }
@@ -95,25 +114,38 @@ namespace Apache.NMS.Amqp
         {
             get { return started.Value; }
         }
+        #endregion
 
+        #region IStoppable Members
         /// <summary>
         /// Temporarily stop asynchronous delivery of inbound messages for this connection.
         /// The sending of outbound messages is unaffected.
         /// </summary>
         public void Stop()
         {
+            // Close qpidConnection
+            CheckDisconnected();
+
+            // Administratively close NMS objects
             if (started.CompareAndSet(true, false))
             {
-                lock (sessions.SyncRoot)
+                foreach (Session session in sessions)
                 {
-                    foreach (Session session in sessions)
-                    {
-                        //session.Stop();
-                    }
+                    // Create and start qpidSessions
+                    session.Stop();
                 }
             }
         }
+        #endregion
 
+        #region IDisposable Methods
+        public void Dispose()
+        {
+            Dispose(true);
+        }
+        #endregion
+
+        #region AMQP IConnection Class Methods
         /// <summary>
         /// Creates a new session to work on this connection
         /// </summary>
@@ -127,7 +159,6 @@ namespace Apache.NMS.Amqp
         /// </summary>
         public ISession CreateSession(AcknowledgementMode mode)
         {
-            CheckConnected();
             return new Session(this, GetNextSessionId(), mode);
         }
 
@@ -145,12 +176,6 @@ namespace Apache.NMS.Amqp
             {
                 sessions.Remove(session);
             }
-        }
-
-        public void Dispose()
-        {
-            Dispose(true);
-            GC.SuppressFinalize(this);
         }
 
         protected void Dispose(bool disposing)
@@ -212,10 +237,7 @@ namespace Apache.NMS.Amqp
             get { return clientId; }
             set
             {
-                if(connected.Value)
-                {
-                    throw new NMSException("You cannot change the ClientId once the Connection is connected");
-                }
+                ThrowIfConnected("ClientId");
                 clientId = value;
             }
         }
@@ -226,21 +248,33 @@ namespace Apache.NMS.Amqp
         public IRedeliveryPolicy RedeliveryPolicy
         {
             get { return this.redeliveryPolicy; }
-            set { this.redeliveryPolicy = value; }
+            set
+            {
+                ThrowIfConnected("RedeliveryPolicy");
+                this.redeliveryPolicy = value;
+            }
         }
 
         private ConsumerTransformerDelegate consumerTransformer;
         public ConsumerTransformerDelegate ConsumerTransformer
         {
             get { return this.consumerTransformer; }
-            set { this.consumerTransformer = value; }
+            set
+            {
+                ThrowIfConnected("ConsumerTransformer");
+                this.consumerTransformer = value;
+            }
         }
 
         private ProducerTransformerDelegate producerTransformer;
         public ProducerTransformerDelegate ProducerTransformer
         {
             get { return this.producerTransformer; }
-            set { this.producerTransformer = value; }
+            set
+            {
+                ThrowIfConnected("ProducerTransformer");
+                this.producerTransformer = value;
+            }
         }
 
         /// <summary>
@@ -298,17 +332,26 @@ namespace Apache.NMS.Amqp
                         try
                         {
                             // TODO: embellish the brokerUri with other connection options
-                            // Allocate a new Qpid connection
-                            qpidConnection = new Org.Apache.Qpid.Messaging.Connection(brokerUri.ToString());
-                            
+                            // Allocate a Qpid connection
+                            if (qpidConnection == null)
+                            {
+                                qpidConnection =
+                                    new Org.Apache.Qpid.Messaging.Connection(
+                                        brokerUri.ToString(),
+                                        ConstructConnectionOptionsString(connectionProperties));
+                            }
+
                             // Open the connection
-                            qpidConnection.Open();
+                            if (!qpidConnection.IsOpen)
+                            {
+                                qpidConnection.Open();
+                            }
 
                             connected.Value = true;
                         }
                         catch (Org.Apache.Qpid.Messaging.QpidException e)
                         {
-                            throw new ConnectionClosedException( e.Message );
+                            throw new ConnectionClosedException(e.Message);
                         }
                     }
                     finally
@@ -331,6 +374,54 @@ namespace Apache.NMS.Amqp
             if (!connected.Value)
             {
                 throw new ConnectionClosedException();
+            }
+        }
+
+
+        /// <summary>
+        /// Check and ensure that the connection object is disconnected
+        /// Open connections are closed and this closes related sessions, senders, and receivers.
+        /// Closed connections may be restarted with subsequent calls to Start().
+        /// </summary>
+        internal void CheckDisconnected()
+        {
+            if (closed.Value || closing.Value)
+            {
+                throw new ConnectionClosedException();
+            }
+            if (!connected.Value)
+            {
+                return;
+            }
+            while (connected.Value && !closed.Value && !closing.Value)
+            {
+                if (Monitor.TryEnter(connectedLock))
+                {
+                    try
+                    {
+                        // Close the connection
+                        if (qpidConnection.IsOpen)
+                        {
+                            qpidConnection.Close();
+                        }
+
+                        connected.Value = false;
+                        break;
+                    }
+                    catch (Org.Apache.Qpid.Messaging.QpidException e)
+                    {
+                        throw new NMSException("AMQP Connection close failed : " + e.Message);
+                    }
+                    finally
+                    {
+                        Monitor.Exit(connectedLock);
+                    }
+                }
+            }
+
+            if (connected.Value)
+            {
+                throw new NMSException("Failed to close AMQP Connection");
             }
         }
 
@@ -380,9 +471,89 @@ namespace Apache.NMS.Amqp
         {
         }
 
+        #endregion
+
+        #region ConnectionProperties Methods
+
+        /// <summary>
+        /// Connection connectionProperties acceessor
+        /// </summary>
+        /// <remarks>This factory does not check for legal property names. Users
+        /// my specify anything they want. Propery name processing happens when
+        /// connections are created and started.</remarks>
+        public StringDictionary ConnectionProperties
+        {
+            get { return connectionProperties; }
+            set
+            {
+                ThrowIfConnected("ConnectionProperties");
+                connectionProperties = value;
+            }
+        }
+
+        /// <summary>
+        /// Test existence of named property
+        /// </summary>
+        /// <param name="name">The name of the connection property to test.</param>
+        /// <returns>Boolean indicating if property exists in setting dictionary.</returns>
+        public bool ConnectionPropertyExists(string name)
+        {
+            return connectionProperties.ContainsKey(name);
+        }
+
+        /// <summary>
+        /// Get value of named property
+        /// </summary>
+        /// <param name="name">The name of the connection property to get.</param>
+        /// <returns>string value of property.</returns>
+        /// <remarks>Throws if requested property does not exist.</remarks>
+        public string GetConnectionProperty(string name)
+        {
+            if (connectionProperties.ContainsKey(name))
+            {
+                return connectionProperties[name];
+            }
+            else
+            {
+                throw new NMSException("Amqp connection property '" + name + "' does not exist");
+            }
+        }
+
+        /// <summary>
+        /// Set value of named property
+        /// </summary>
+        /// <param name="name">The name of the connection property to set.</param>
+        /// <param name="value">The value of the connection property.</param>
+        /// <returns>void</returns>
+        /// <remarks>Existing property values are overwritten. New property values
+        /// are added.</remarks>
+        public void SetConnectionProperty(string name, string value)
+        {
+            ThrowIfConnected("SetConnectionProperty:" + name);
+            if (connectionProperties.ContainsKey(name))
+            {
+                connectionProperties[name] = value;
+            }
+            else
+            {
+                connectionProperties.Add(name, value);
+            }
+        }
+        #endregion
+
+        #region AMQP Connection Utilities
+
+        private void ThrowIfConnected(string propName)
+        {
+            if (connected.Value)
+            {
+                throw new NMSException("Can not change connection property while Connection is connected: " + propName);
+            }
+        }
+
         public void HandleException(Exception e)
         {
-            if(ExceptionListener != null && !this.closed.Value)
+            if (ExceptionListener != null && !this.closed.Value)
             {
                 ExceptionListener(e);
             }
@@ -391,6 +562,7 @@ namespace Apache.NMS.Amqp
                 Tracer.Error(e);
             }
         }
+
 
         public int GetNextSessionId()
         {
@@ -406,5 +578,46 @@ namespace Apache.NMS.Amqp
             }
             return qpidConnection.CreateSession();
         }
+
+
+        /// <summary>
+        /// Convert specified connection properties string map into the
+        /// connection properties string to send to Qpid Messaging. 
+        /// </summary>
+        /// <returns>qpid connection properties string</returns>
+        /// <remarks>Mostly this is pass-through. Default to amqp1.0
+        /// in the absence of any protocol option.</remarks>
+        internal string ConstructConnectionOptionsString(StringDictionary cp)
+        {
+            string result = "";
+            // Construct qpid connection string
+            bool first = true;
+            result = "{";
+            foreach (DictionaryEntry de in cp)
+            {
+                if (!first)
+                {
+                    result += SEP_ARGS;
+                }
+                result += de.Key + SEP_NAME_VALUE.ToString() + de.Value;
+                first = false;
+            }
+
+            // protocol version munging
+            if (!cp.ContainsKey(PROTOCOL_OPTION))
+            {
+                // no protocol option - select 1.0
+                if (!first)
+                {
+                    result += SEP_ARGS;
+                }
+                result += PROTOCOL_OPTION + SEP_NAME_VALUE.ToString() + PROTOCOL_1_0;
+            }
+
+            result += "}";
+            return result;
+        }
+
+        #endregion
     }
 }

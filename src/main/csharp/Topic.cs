@@ -23,23 +23,23 @@ namespace Apache.NMS.Amqp
 {
 
     /// <summary>
-    /// Summary description for Queue.
+    /// Summary description for Topic.
     /// </summary>
-    public class Queue : Destination, IQueue
+    public class Topic : Destination, ITopic
     {
 
-        public Queue()
+        public Topic()
             : base()
         {
         }
 
-        public Queue(String name)
+        public Topic(String name)
             : base(name)
         {
         }
 
-        public Queue(String name, string subject, OptionsMap options)
-            : base(name, subject, options, "queue")
+        public Topic(String name, string subject, OptionsMap options)
+            : base(name, subject, options, "topic")
         {
         }
 
@@ -47,11 +47,11 @@ namespace Apache.NMS.Amqp
         {
             get
             {
-                return DestinationType.Queue;
+                return DestinationType.Topic;
             }
         }
 
-        public String QueueName
+        public String TopicName
         {
             get { return Path; }
         }
@@ -59,12 +59,13 @@ namespace Apache.NMS.Amqp
 
         public override Destination CreateDestination(String name)
         {
-            return new Queue(name);
+            return new Topic(name);
         }
+
 
         public override Destination CreateDestination(String name, string subject, OptionsMap options)
         {
-            return new Queue(name, subject, options);
+            return new Topic(name, subject, options);
         }
     }
 }

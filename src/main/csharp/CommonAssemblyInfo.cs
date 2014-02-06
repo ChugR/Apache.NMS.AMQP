@@ -20,9 +20,9 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyConfigurationAttribute("SNAPSHOT")]
 [assembly: AssemblyCompanyAttribute("http://activemq.apache.org/nms")]
 [assembly: AssemblyProductAttribute("Apache NMS for AMQP Class Library")]
-[assembly: AssemblyCopyrightAttribute("Copyright (C) 2005-2013 Apache Software Foundation")]
+[assembly: AssemblyCopyrightAttribute("Copyright (C) 2005-2014 Apache Software Foundation")]
 [assembly: AssemblyTrademarkAttribute("")]
 [assembly: AssemblyCultureAttribute("")]
-[assembly: AssemblyVersionAttribute("1.6.0.3264")]
+[assembly: AssemblyVersionAttribute("1.6.0.3293")]
 [assembly: AssemblyInformationalVersionAttribute("1.6.0")]
 

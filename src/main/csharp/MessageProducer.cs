@@ -62,6 +62,7 @@ namespace Apache.NMS.Amqp
             this.destination = destination;
         }
 
+        #region IStartable Methods
         public void Start()
         {
             // Don't try creating session if connection not yet up
@@ -75,7 +76,11 @@ namespace Apache.NMS.Amqp
                 try
                 {
                     // Create qpid sender
-                    qpidSender = session.CreateQpidSender("");
+                    Tracer.DebugFormat("Start Producer Id = " + ProducerId.ToString()); 
+                    if (qpidSender == null)
+                    {
+                        qpidSender = session.CreateQpidSender(destination.Address);
+                    }
                 }
                 catch (Org.Apache.Qpid.Messaging.QpidException e)
                 {
@@ -83,6 +88,31 @@ namespace Apache.NMS.Amqp
                 }
             }
         }
+
+        public bool IsStarted
+        {
+            get { return started.Value; }
+        }
+        #endregion
+
+        #region IStoppable Methods
+        public void Stop()
+        {
+            if (started.CompareAndSet(true, false))
+            {
+                try
+                {
+                    Tracer.DebugFormat("Stop  Producer Id = " + ProducerId);
+                    qpidSender.Dispose();
+                    qpidSender = null;
+                }
+                catch (Org.Apache.Qpid.Messaging.QpidException e)
+                {
+                    throw new NMSException("Failed to close session with Id " + ProducerId.ToString() + " : " + e.Message);
+                }
+            }
+        }
+        #endregion
 
         public void Send(IMessage message)
         {
@@ -128,7 +158,7 @@ namespace Apache.NMS.Amqp
                 // Convert the Message into a Amqp message
                 Message msg = session.MessageConverter.ToAmqpMessage(message);
 
-                // TODO: send the message!
+                qpidSender.Send(msg);
             }
             catch (Exception e)
             {

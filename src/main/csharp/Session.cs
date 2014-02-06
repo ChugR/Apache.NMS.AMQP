@@ -20,12 +20,15 @@ using System.Threading;
 using Apache.NMS.Util;
 using Org.Apache.Qpid.Messaging;
 
+// Typedef for options map
+using OptionsMap = System.Collections.Generic.Dictionary<System.String, System.Object>;
+
 namespace Apache.NMS.Amqp
 {
     /// <summary>
     /// Amqp provider of ISession
     /// </summary>
-    public class Session : ISession
+    public class Session : ISession, IStartable, IStoppable
     {
         /// <summary>
         /// Private object used for synchronization, instead of public "this"
@@ -73,6 +76,7 @@ namespace Apache.NMS.Amqp
             connection.AddSession(this);
         }
 
+        #region IStartable Methods
         /// <summary>
         /// Create new unmanaged session and start senders and receivers
         /// Associated connection must be open.
@@ -90,7 +94,10 @@ namespace Apache.NMS.Amqp
                 try
                 {
                     // Create qpid session
-                    qpidSession = connection.CreateQpidSession();
+                    if (qpidSession == null)
+                    {
+                        qpidSession = connection.CreateQpidSession();
+                    }
 
                     // Start producers and consumers
                     lock (producers.SyncRoot)
@@ -119,12 +126,48 @@ namespace Apache.NMS.Amqp
         {
             get { return started.Value; }
         }
+        #endregion
 
+        #region IStoppable Methods
+        public void Stop()
+        {
+            if (started.CompareAndSet(true, false))
+            {
+                try
+                {
+                    lock (producers.SyncRoot)
+                    {
+                        foreach (MessageProducer producer in producers.Values)
+                        {
+                            producer.Stop();
+                        }
+                    }
+                    lock (consumers.SyncRoot)
+                    {
+                        foreach (MessageConsumer consumer in consumers.Values)
+                        {
+                            consumer.Stop();
+                        }
+                    }
+
+                    qpidSession.Dispose();
+                    qpidSession = null;
+                }
+                catch (Org.Apache.Qpid.Messaging.QpidException e)
+                {
+                    throw new NMSException("Failed to close session with Id " + SessionId.ToString() + " : " + e.Message);
+                }
+            }
+        }
+        #endregion
+
+        #region IDisposable Methods
         public void Dispose()
         {
             Dispose(true);
-            GC.SuppressFinalize(this);
         }
+        #endregion
+
 
         protected void Dispose(bool disposing)
         {
@@ -228,15 +271,15 @@ namespace Apache.NMS.Amqp
 
         public IMessageProducer CreateProducer(IDestination destination)
         {
+            if (destination == null)
+            {
+                throw new InvalidDestinationException("Cannot create a Consumer with a Null destination");
+            }
             MessageProducer producer = null;
             try
             {
-                Destination dest = null;
-                if (destination != null)
-                {
-                    dest.Path = destination.ToString();
-                }
-                producer = DoCreateMessageProducer(dest);
+                Queue queue = new Queue(destination.ToString());
+                producer = DoCreateMessageProducer(queue);
 
                 this.AddProducer(producer);
             }
@@ -280,12 +323,8 @@ namespace Apache.NMS.Amqp
 
             try
             {
-                Destination dest = null;
-                if (destination != null)
-                {
-                    dest.Path = destination.ToString();
-                }
-                consumer = DoCreateMessageConsumer(GetNextConsumerId(), dest, acknowledgementMode);
+                Queue queue = new Queue(destination.ToString());
+                consumer = DoCreateMessageConsumer(GetNextConsumerId(), queue, acknowledgementMode);
 
                 consumer.ConsumerTransformer = this.ConsumerTransformer;
 
@@ -343,7 +382,17 @@ namespace Apache.NMS.Amqp
 
         public ITopic GetTopic(string name)
         {
-            throw new NotSupportedException("TODO: Topic");
+            return new Topic(name);
+        }
+
+        public IQueue GetQueue(string name, string subject, OptionsMap options)
+        {
+            return new Queue(name, subject, options);
+        }
+
+        public ITopic GetTopic(string name, string subject, OptionsMap options)
+        {
+            return new Topic(name, subject, options);
         }
 
         public ITemporaryQueue CreateTemporaryQueue()
@@ -522,7 +571,7 @@ namespace Apache.NMS.Amqp
         }
 
 
-        public Org.Apache.Qpid.Messaging.Receiver CreateQpidReceiver(string address)
+        public Org.Apache.Qpid.Messaging.Receiver CreateQpidReceiver(Address address)
         {
             if (!IsStarted)
             {
@@ -531,7 +580,7 @@ namespace Apache.NMS.Amqp
             return qpidSession.CreateReceiver(address);
         }
 
-        public Org.Apache.Qpid.Messaging.Sender CreateQpidSender(string address)
+        public Org.Apache.Qpid.Messaging.Sender CreateQpidSender(Address address)
         {
             if (!IsStarted)
             {
